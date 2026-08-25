@@ -155,6 +155,10 @@ details[open] summary::after{content:"–"}
 .foot{font-size:13px;color:var(--ink3);margin:16px 2px 0;line-height:1.6}
 .spark{display:block;width:100%;height:44px;margin-top:9px}
 .empty{color:var(--ink3);font-size:14px;padding:26px 16px;text-align:center;font-family:var(--mono)}
+#impbox{display:none;width:100%;min-height:120px;margin:8px 0 0;padding:10px;box-sizing:border-box;
+  font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink2);background:var(--bg2);
+  border:1px solid var(--line2);border-radius:10px;resize:vertical;-webkit-appearance:none}
+#impbox:focus{outline:none;border-color:var(--teal)}
 .mode{background:none;border:1px solid var(--line2);color:var(--ink3);font-family:var(--mono);font-size:9.5px;
   letter-spacing:.1em;text-transform:uppercase;border-radius:8px;padding:6px 9px;cursor:pointer;flex:0 0 auto;min-height:32px}
 .mode.on{border-color:var(--oxide);color:var(--oxide);background:rgba(224,102,79,.1)}
@@ -788,7 +792,10 @@ function prog(){
   $("#main").innerHTML=h;
   if(!$(".bar")){var b=document.createElement("div");b.className="bar";
     b.innerHTML='<div class="in"><button class="btn" style="flex:1" onclick="ex_()">Alle Daten als CSV</button>'
-      +'<button class="btn ghost" onclick="imp()">CSV laden</button></div>';
+      +'<button class="btn ghost" onclick="imp()">CSV laden</button>'
+      +'<button class="btn ghost" onclick="impText()">Text</button></div>'
+      +'<textarea id="impbox" placeholder="CSV hier einfügen, dann Übernehmen"></textarea>'
+      +'<div id="impgo" class="in" style="display:none"><button class="btn" style="flex:1" onclick="impGo()">Übernehmen</button></div>';
     document.body.appendChild(b);}
 }
 function spark(p){
@@ -841,6 +848,25 @@ async function ex_(){
 /* ---------- CSV-Import ----------
    Liest die vom CSV-Knopf erzeugte Datei zurueck. Bestehende Eintraege desselben
    Datums werden ersetzt, alle uebrigen bleiben stehen — der Import ergaenzt, er loescht nicht. */
+async function impMerge(acc){
+  var neu=0,ers=0,unb=[];
+  Object.keys(acc).forEach(function(id){
+    if(!REG.m[id]&&unb.indexOf(id)<0) unb.push(id);
+    LOG[id]=LOG[id]||[];
+    Object.keys(acc[id]).forEach(function(d){
+      var sets=acc[id][d].filter(function(x){return x;});
+      if(!sets.length)return;
+      var j=LOG[id].findIndex(function(x){return x.d===d;});
+      if(j>=0){LOG[id][j]={d:d,s:sets};ers++;}
+      else{LOG[id].push({d:d,s:sets});neu++;}
+    });
+    if(!LOG[id].length) delete LOG[id];
+  });
+  var ok=await save();
+  if(!ok){toast("Speichern fehlgeschlagen",1);return;}
+  toast(neu+" neu, "+ers+" ersetzt"+(unb.length?" · "+unb.length+" unbekannte ID":""),!!unb.length);
+  render();
+}
 function csvParse(txt){
   var L=txt.replace(/^\ufeff/,"").split(/\r?\n/).filter(function(x){return x.trim();});
   if(!L.length) return null;
@@ -864,36 +890,50 @@ function csvParse(txt){
   }
   return acc;
 }
-async function imp(){
+/* Die Dateiauswahl muss im Dokument haengen und darf nicht zu eng filtern.
+   Auf iOS oeffnet .click() an einem losen Element keinen Waehler, und ".csv"
+   allein graut die Datei im Dateien-Waehler aus, weil iOS exportierte CSVs
+   je nach Herkunft als plain-text oder als Daten typisiert. */
+function imp(){
   var inp=document.createElement("input");
-  inp.type="file";inp.accept=".csv,text/csv";
+  inp.type="file";
+  inp.accept=".csv,.txt,text/csv,text/plain,text/comma-separated-values,application/csv,application/vnd.ms-excel";
+  inp.style.cssText="position:fixed;left:-9999px;top:0;opacity:0";
+  document.body.appendChild(inp);
+  var weg=function(){setTimeout(function(){if(inp.parentNode)inp.parentNode.removeChild(inp);},400);};
   inp.onchange=function(){
-    var f=inp.files&&inp.files[0];if(!f)return;
+    var f=inp.files&&inp.files[0];
+    if(!f){weg();return;}
     var rd=new FileReader();
+    rd.onerror=function(){toast("Datei nicht lesbar",1);weg();};
     rd.onload=async function(){
+      weg();
       var acc=csvParse(String(rd.result));
       if(!acc){toast("Keine gültige Trainings-CSV",1);return;}
-      var neu=0,ers=0,unb=[];
-      Object.keys(acc).forEach(function(id){
-        if(!REG.m[id]&&unb.indexOf(id)<0) unb.push(id);
-        LOG[id]=LOG[id]||[];
-        Object.keys(acc[id]).forEach(function(d){
-          var sets=acc[id][d].filter(function(x){return x;});
-          if(!sets.length)return;
-          var j=LOG[id].findIndex(function(x){return x.d===d;});
-          if(j>=0){LOG[id][j]={d:d,s:sets};ers++;}
-          else{LOG[id].push({d:d,s:sets});neu++;}
-        });
-        if(!LOG[id].length) delete LOG[id];
-      });
-      var ok=await save();
-      if(!ok){toast("Speichern fehlgeschlagen",1);return;}
-      toast(neu+" neu, "+ers+" ersetzt"+(unb.length?" · "+unb.length+" unbekannte ID":""),!!unb.length);
-      render();
+      await impMerge(acc);
     };
     rd.readAsText(f,"utf-8");
   };
   inp.click();
+}
+/* Rueckfallweg fuer iOS: Text aus der Zwischenablage. Der Export legt die CSV
+   notfalls dort ab, damit ist der Weg zurueck symmetrisch zum Weg hinaus. */
+function impText(){
+  var t=$("#impbox"), g=$("#impgo");
+  if(!t)return;
+  var auf=t.style.display!=="block";
+  t.style.display=auf?"block":"none";
+  if(g)g.style.display=auf?"flex":"none";
+  if(auf)t.focus();
+}
+async function impGo(){
+  var t=$("#impbox");
+  if(!t||!t.value.trim()){toast("Kein Text eingefügt",1);return;}
+  var acc=csvParse(t.value);
+  if(!acc){toast("Kein gültiges CSV-Format",1);return;}
+  await impMerge(acc);
+  t.value="";t.style.display="none";
+  var g=$("#impbox")&&$("#impgo"); if(g)g.style.display="none";
 }
 $("#back").onclick=function(){view="home";render();};
 load();
