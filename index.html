@@ -129,6 +129,8 @@ details[open] summary::after{content:"–"}
 .bar{position:fixed;bottom:0;left:0;right:0;background:rgba(15,26,25,.96);backdrop-filter:blur(12px);
   border-top:1px solid var(--line);padding:11px 16px calc(11px + var(--bot));z-index:25}
 .bar .in{max-width:560px;margin:0 auto;display:flex;gap:9px}
+.in2{display:flex;gap:9px}
+.in2 .btn{height:44px;font-size:13px;padding:0 12px}
 .btn{flex:1;height:52px;border-radius:12px;border:1px solid var(--teal);background:var(--teal);color:#0F1A19;
   font-family:var(--mono);font-size:14px;font-weight:600;cursor:pointer}
 .btn:active{opacity:.85}
@@ -578,6 +580,11 @@ function afterSet(gi,ii){
 /* ---------- Ansichten ---------- */
 function render(){
   stopT();
+  /* Die Leiste am unteren Rand wird bei jedem Ansichtswechsel verworfen und neu
+     gebaut. Vorher legten session() und prog() sie nur an, wenn keine vorhanden war
+     — die Leiste der Einheit blieb dadurch im Verlauf stehen, mitsamt "Einheit
+     speichern" statt der Import-Knöpfe. */
+  var alt=$(".bar"); if(alt) alt.remove();
   var mb=$("#mode");
   if(mb){mb.classList.toggle("on",MODE==="reha");
     mb.textContent=MODE==="reha"?stufeNow(today()).n.split(" ·")[0]:"Reha";}
@@ -634,7 +641,7 @@ function home(){
     +'<span style="font-family:var(--mono);font-size:11.5px">Speicherort: '
     +(STORE.where==="kein Speicher"?'<b style="color:var(--oxide)">kein Speicher — Einträge gehen verloren</b>':STORE.where)
     +'</span></p>';
-  $("#main").innerHTML=h;var b=$(".bar");if(b)b.remove();
+  $("#main").innerHTML=h;
 }
 function op(k){cur=k;view="session";render();}
 
@@ -719,7 +726,7 @@ function session(){
     h+='</div>';
   });
   $("#main").innerHTML=h;
-  if(!$(".bar")){var b=document.createElement("div");b.className="bar";
+  {var b=document.createElement("div");b.className="bar";
     b.innerHTML='<div class="in"><button class="btn" onclick="saveS()">Einheit speichern</button>'
       +'<button class="btn ghost" onclick="ex_()">CSV</button></div>';document.body.appendChild(b);}
   PEND={};
@@ -757,12 +764,29 @@ async function delEntry(id,d){
   if(!LOG[id].length)delete LOG[id];
   var ok=await save();toast(ok?"Eintrag gelöscht":"Speichern fehlgeschlagen",!ok);render();
 }
+/* Die Importkarte steht im Inhalt und wird auch dann gezeigt, wenn das Protokoll
+   leer ist. Genau dann wird sie gebraucht: Vorher endete prog() bei leerem Speicher
+   mit "Noch keine Einheiten protokolliert" — der Rueckweg aus einer Sicherung war
+   ausgerechnet im Ernstfall nicht erreichbar. */
+function impKarte(){
+  return '<div class="card"><div class="head"><div class="n"><b>Sicherung einlesen</b></div>'
+    + '<div class="rir">Ergänzt das Protokoll · ersetzt nur gleiche Übung am gleichen Datum</div></div>'
+    + '<div style="padding:0 16px 14px"><div class="in2">'
+    + '<button class="btn ghost" style="flex:1" onclick="imp()">Datei wählen</button>'
+    + '<button class="btn ghost" style="flex:1" onclick="impText()">Text einfügen</button></div>'
+    + '<textarea id="impbox" placeholder="CSV hier einfügen, dann Übernehmen"></textarea>'
+    + '<div id="impgo" class="in2" style="display:none"><button class="btn" style="flex:1" onclick="impGo()">Übernehmen</button></div>'
+    + '</div></div>';
+}
 function prog(){
   var all=REG.o.map(function(id){
     var e=REG.m[id].ex, c={};for(var q in e)c[q]=e[q];c.day=REG.m[id].k;return c;});
   var w=all.filter(function(e){return LOG[e.id]&&LOG[e.id].length;});
-  if(!w.length){$("#main").innerHTML='<div class="empty">Noch keine Einheiten protokolliert.</div>';
-    var bb=$(".bar");if(bb)bb.remove();return;}
+  if(!w.length){
+    $("#main").innerHTML = impKarte()
+      + '<div class="empty">Noch keine Einheiten protokolliert.<br><br>'
+      + 'Liegt eine CSV-Sicherung vor, kannst du sie oben einlesen.</div>';
+    return;}
   var h="";
   w.forEach(function(ex){
     var hi=hist(ex.id), Z=isZeit(ex);
@@ -789,13 +813,12 @@ function prog(){
     +'<b style="color:var(--ink2)">CSV laden</b> stellt ein Backup wieder her. Einträge mit gleichem Datum '
     +'und gleicher Übung werden ersetzt, alle übrigen bleiben stehen — der Import ergänzt, er löscht nie. '
     +'Der Verlauf zeigt beide Programme, unabhängig davon, welcher Plan gerade aktiv ist.</p>';
-  $("#main").innerHTML=h;
-  if(!$(".bar")){var b=document.createElement("div");b.className="bar";
-    b.innerHTML='<div class="in"><button class="btn" style="flex:1" onclick="ex_()">Alle Daten als CSV</button>'
-      +'<button class="btn ghost" onclick="imp()">CSV laden</button>'
-      +'<button class="btn ghost" onclick="impText()">Text</button></div>'
-      +'<textarea id="impbox" placeholder="CSV hier einfügen, dann Übernehmen"></textarea>'
-      +'<div id="impgo" class="in" style="display:none"><button class="btn" style="flex:1" onclick="impGo()">Übernehmen</button></div>';
+  /* Der Import steht als Karte im Inhalt, nicht in der schwebenden Leiste.
+     Er ist eine seltene, bewusste Handlung und darf nicht davon abhaengen,
+     ob die Leiste gerade korrekt aufgebaut wurde. */
+  $("#main").innerHTML = impKarte() + h;
+  {var b=document.createElement("div");b.className="bar";
+    b.innerHTML='<div class="in"><button class="btn" onclick="ex_()">Alle Daten als CSV</button></div>';
     document.body.appendChild(b);}
 }
 function spark(p){
