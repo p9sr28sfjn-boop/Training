@@ -251,9 +251,53 @@ function schrittZiel(ds){
   if(ds<"2026-09-08") return "5.000/Tag";
   if(ds<"2026-09-15") return "7.000/Tag";
   if(ds<"2026-09-28") return "9.000/Tag";
-  return "10.300/Tag";
+  return "9.000/Tag exkl. Training";
 }
 function frei(ex,ds){return !ex.frei || ds>=ex.frei;}
+
+/* ---------- Cardio-Anhang an die Krafteinheiten (ab 04.09.2026) ----------
+   Grund: Eigenstaendige Cardio-Slots fallen aus, angehaengte nicht. Der Anhang
+   sitzt in einem Termin, zu dem du ohnehin faehrst. Er senkt den Sonntagsanteil
+   von 40 % auf rund 25 % und macht die Woche gegen einen Ausfall robust.
+
+   Stufe 1 ist der Einstieg. Stufe 2 erst nach zwei Wochen mit HRV >= 50 ms und
+   Ruhepuls <= 56. Faellt die HRV, geht es eine Stufe zurueck — nicht die Kalorien.
+
+   Modalitaet nach Einheit: nach Unterkoerper (A, C) nicht-impact und niedrig
+   intensiv, weil die Beine vorermuedet sind und dort die Interferenz sitzt.
+   Nach Oberkoerper (B, D) sind die Beine frisch, dort steht die hoehere Last.
+   Netto-kcal/min: Crosstrainer und Rudern 8,5 · Rad sitzend 7,75 · Laufband
+   12-15 % gehend 11,6. */
+var ANHSTUFE = 1;
+var ANHANG = {
+ A:{min:[25,36], mod:"Crosstrainer Zone 2",           reha:"Rad sitzend Zone 2",
+    n:"Nach den Beinen nicht-impact und Zone 2 unten. Kein Intervall."},
+ B:{min:[25,35], mod:"Laufband 12–15 % gehend",       reha:"Crosstrainer Zone 2",
+    n:"Beine frisch — hier steht der ertragreichste Anhang der Woche."},
+ C:{min:[25,37], mod:"Crosstrainer Zone 2",           reha:"Rad sitzend Zone 2",
+    n:"Nach den Beinen nicht-impact. Widerstand vor Frequenz."},
+ D:{min:[25,66], mod:"Rudern oder Crosstrainer Z2",   reha:"Crosstrainer Zone 2",
+    n:"Sonntag folgt — auf Stufe 1 kurz halten, Stufe 2 nur bei guter HRV."}
+};
+var KCALMIN = {"Crosstrainer Zone 2":8.5,"Rudern oder Crosstrainer Z2":8.5,
+               "Rad sitzend Zone 2":7.75,"Laufband 12–15 % gehend":11.6};
+function anhang(k,ds){
+  var A=ANHANG[k]; if(!A) return null;
+  /* Vor dem 08.09. traegt nur das sitzende Rad (Stufe 1 und 2 der Freigabe).
+     Crosstrainer und Rudergeraet sind ab Stufe 3 frei, das Laufband mit
+     Steigung erst nach der Rueckkehr — es hat die hoechste Faszienlast. */
+  var mod = A.mod;
+  if(MODE==="reha"||ds<REHAENDE){ mod = (ds<"2026-09-08") ? "Rad sitzend Zone 2" : A.reha; }
+  var min = A.min[ANHSTUFE-1];
+  return {min:min, mod:mod, n:A.n, kcal:Math.round(min*(KCALMIN[mod]||8.5))};
+}
+function anhangWoche(ds){
+  var s=0; ORDER.forEach(function(k){var a=anhang(k,ds); if(a)s+=a.kcal;}); return s;
+}
+async function setAnhStufe(v){
+  ANHSTUFE=v; await STORE.set("anhstufe",String(v));
+  toast("Anhang auf Stufe "+v+" gesetzt"); render();
+}
 
 var REHA = (function(){
  function C(o){return JSON.parse(JSON.stringify(o));}
@@ -422,6 +466,8 @@ async function load(){
   try{ LOG = raw ? JSON.parse(raw) : {}; }catch(e){ LOG = {}; }
   var m = await STORE.get("modus");
   MODE = (m==="reha") ? "reha" : "std";
+  var a = await STORE.get("anhstufe");
+  ANHSTUFE = (a==="2") ? 2 : 1;
   render();
 }
 async function toggleMode(){
@@ -621,16 +667,30 @@ function home(){
       +'<span class="t"><b>'+esc(p.name)+'</b><span>'+p.day+' · '
       +items(k).filter(function(e){return !e.opt;}).length+' Übungen · '+p.dur+'</span></span>'
       +'<span class="chev">›</span></button></div>';});
-  h+='<p class="eyebrow" style="margin-top:24px">Ausdauer</p><div class="card"><div class="hist">'
+  h+='<p class="eyebrow" style="margin-top:24px">Anhang an die Krafteinheiten</p><div class="card"><div class="hist">'
+    +ORDER.map(function(k){var A=anhang(k,today()); if(!A)return "";
+       return '<div class="r"><span>'+k+' · '+PROGRAM[k].day.slice(0,2)+'</span><span class="v">'
+         +esc(A.mod)+'<br>'+A.min+' min · ≈ '+A.kcal+' kcal</span></div>';}).join("")
+    +'<div class="r"><span>Woche</span><span class="v">≈ '+anhangWoche(today())+' kcal netto</span></div>'
+    +'</div><div style="display:flex;gap:8px;padding:12px 16px 14px">'
+    +'<button class="btn ghost" style="flex:1'+(ANHSTUFE===1?';border-color:var(--teal);color:var(--teal)':'')
+    +'" onclick="setAnhStufe(1)">Stufe 1 · Einstieg</button>'
+    +'<button class="btn ghost" style="flex:1'+(ANHSTUFE===2?';border-color:var(--teal);color:var(--teal)':'')
+    +'" onclick="setAnhStufe(2)">Stufe 2 · Ziel</button></div>'
+    +'<p class="whytext">Stufe 2 erst nach zwei Wochen mit HRV ≥ 50 ms und Ruhepuls ≤ 56. '
+    +'Fällt die HRV über zwei Wochen, geht der Anhang eine Stufe zurück — nicht die Kalorien.</p></div>'
+    +'<p class="eyebrow" style="margin-top:24px">Ausdauer</p><div class="card"><div class="hist">'
     +(MODE==="reha"
-      ? '<div class="r"><span>Mittwoch</span><span class="v">ICG 50 min Zone 2<br>sitzend, 85–95 U/min</span></div>'
-       +'<div class="r"><span>Donnerstag</span><span class="v">ICG 40 min locker<br>Zone 1–2, aktive Erholung</span></div>'
-       +'<div class="r"><span>Sonntag</span><span class="v">ICG 2× 40 min Zone 2<br>10 min Pause dazwischen</span></div>'
+      ? '<div class="r"><span>Mittwoch</span><span class="v">frei · nur Schritte<br>Lauf frühestens 28.09., Kadenz über 160</span></div>'
+       +'<div class="r"><span>Donnerstag</span><span class="v">frei · nur Schritte</span></div>'
+       +'<div class="r"><span>Sonntag</span><span class="v">Rad sitzend 80–100 min Zone 2<br>10 min Pause nach 40 min</span></div>'
        +'<div class="r"><span>Schritte</span><span class="v">'+esc(schrittZiel(today()))+'</span></div>'
        +'<div class="r"><span>Pedal</span><span class="v">Mittelfuß auf der Achse<br>kein Wiegetritt, keine Sprints</span></div>'
       : '<div class="r"><span>Mittwoch</span><span class="v">Lauf 35–40 min · Kadenzfokus<br>ab Dezember 4×4 Intervalle</span></div>'
-       +'<div class="r"><span>Donnerstag</span><span class="v">Ruhe oder Mobility</span></div>'
-       +'<div class="r"><span>Sonntag</span><span class="v">Zone 2, 90–140 min<br>+ 5× 2 min bergauf 160–170 bpm</span></div>')
+       +'<div class="r"><span>Donnerstag</span><span class="v">frei · nur Schritte</span></div>'
+       +'<div class="r"><span>Sonntag</span><span class="v"><b>Standard:</b> Laufband 12–15 % oder Crosstrainer<br>'
+       +'90–120 min Zone 2 · Wanderung ist das Upgrade, nicht der Plan</span></div>'
+       +'<div class="r"><span>Schritte</span><span class="v">'+esc(schrittZiel(today()))+'</span></div>')
     +'</div></div>'
     +'<div class="card"><button class="day" onclick="view=\'prog\';render()">'
     +'<span class="badge">↗</span><span class="t"><b>Verlauf</b><span>Lastentwicklung · CSV-Export</span></span>'
@@ -725,6 +785,13 @@ function session(){
       h+='<div class="grp'+lk+'">'+exBlock(ex,gi,ii)+'</div>';});
     h+='</div>';
   });
+  {var A=anhang(cur,today());
+   if(A) h+='<div class="card"><div class="gh"><i></i>Anhang · Stufe '+ANHSTUFE
+     +' · zählt nicht zum Satzvolumen</div><div class="hist">'
+     +'<div class="r"><span>Modalität</span><span class="v">'+esc(A.mod)+'</span></div>'
+     +'<div class="r"><span>Dauer</span><span class="v">'+A.min+' min</span></div>'
+     +'<div class="r"><span>Ertrag</span><span class="v">≈ '+A.kcal+' kcal netto</span></div>'
+     +'</div><p class="whytext">'+esc(A.n)+'</p></div>';}
   $("#main").innerHTML=h;
   {var b=document.createElement("div");b.className="bar";
     b.innerHTML='<div class="in"><button class="btn" onclick="saveS()">Einheit speichern</button>'
